@@ -22,6 +22,13 @@ type LockServer struct {
   locks map[string]bool
 }
 
+type dyingError struct {
+  err string
+}
+
+func (e *dyingError) Error() string {
+  return e.err
+}
 
 //
 // server Lock RPC handler.
@@ -32,8 +39,23 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
   ls.mu.Lock()
   defer ls.mu.Unlock()
 
-
   locked, _ := ls.locks[args.Lockname]
+
+  if ls.dying {
+    reply.OK = false
+    fmt.Printf("%s Lock(%s:%t) dying return \n", 
+      logHeader(ls.am_primary),
+      args.Lockname, 
+      locked)
+    return &dyingError{"dying"}
+  }
+
+  // check if i am primary
+  if ls.am_primary {
+    // need not to handle inconsistant! oh yeah~
+    var backup_reply LockReply
+    defer call(ls.backup, "LockServer.Lock", args, backup_reply)
+  }
 
   if locked {
     reply.OK = false
@@ -41,6 +63,13 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
     reply.OK = true
     ls.locks[args.Lockname] = true
   }
+  
+  fmt.Printf("%s Lock(%s:%t)=%t \n", 
+    logHeader(ls.am_primary),
+    args.Lockname, 
+    locked, 
+    reply.OK)
+
 
   return nil
 }
@@ -56,12 +85,34 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
 
   locked, _ := ls.locks[args.Lockname]
 
+  if ls.dying {
+    reply.OK = false
+    fmt.Printf("%s Unlock(%s:%t) dying return \n", 
+      logHeader(ls.am_primary),
+      args.Lockname, 
+      locked)
+    return &dyingError{"dying"}
+  }
+
+  // check if i am primary
+  if ls.am_primary {
+    // need not to handle inconsistant! oh yeah~
+    var backup_reply UnlockReply
+    defer call(ls.backup, "LockServer.Unlock", args, backup_reply)
+  }
+
   if locked {
     reply.OK = true
     ls.locks[args.Lockname] = false
   } else {
     reply.OK = false
   }
+
+  fmt.Printf("%s Unlock(%s:%t)=%t\n", 
+    logHeader(ls.am_primary),
+    args.Lockname, 
+    locked, 
+    reply.OK)
 
   return nil
 }
