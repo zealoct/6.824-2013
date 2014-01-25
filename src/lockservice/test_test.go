@@ -8,15 +8,31 @@ import "strconv"
 import "time"
 import "fmt"
 
+func logHeader(am_primary bool) string {
+  var ret string
+
+  if am_primary {
+    ret = "  P"
+  } else {
+    ret = "    B"
+  }
+
+  return ret
+}
+
 func tl(t *testing.T, ck *Clerk, lockname string, expected bool) {
+  //fmt.Printf("\n*** Lock(%s) expected:%t\n", lockname, expected);
   x := ck.Lock(lockname)
+  //fmt.Printf("*** Lock(%s) expected:%t got:%t. Finshed\n", lockname, expected, x);
   if x != expected {
     t.Fatalf("Lock(%v) returned %v; expected %v", lockname, x, expected)
   }
 }
 
 func tu(t *testing.T, ck *Clerk, lockname string, expected bool) {
+  // fmt.Printf("\n*** Unlock(%s) expected:%t\n", lockname, expected);
   x := ck.Unlock(lockname)
+  // fmt.Printf("*** Unlock(%s) expected:%t got:%t. Finshed\n", lockname, expected, x);
   if x != expected {
     t.Fatalf("Unlock(%v) returned %v; expected %v", lockname, x, expected)
   }
@@ -45,6 +61,8 @@ func TestBasic(t *testing.T) {
   bhost := port("b")
   p := StartServer(phost, bhost, true)  // primary
   b := StartServer(phost, bhost, false) // backup
+
+  fmt.Printf("-- phost:%s, bhost:%s\n", phost, bhost)
 
   ck := MakeClerk(phost, bhost)
 

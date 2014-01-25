@@ -14,10 +14,12 @@ type LockArgs struct {
   // Go's net/rpc requires that these field
   // names start with upper case letters!
   Lockname string  // lock name
+  Version int64
 }
 
 type LockReply struct {
   OK bool
+  version int64
 }
 
 //
@@ -26,8 +28,10 @@ type LockReply struct {
 //
 type UnlockArgs struct {
   Lockname string
+  Version int64
 }
 
 type UnlockReply struct {
   OK bool
+  version int64
 }

@@ -20,6 +20,15 @@ type LockServer struct {
 
   // for each lock name, is it locked?
   locks map[string]bool
+
+  // last lock request version for a lock
+  lockver map[string]int64
+
+  // last return value for a lock, corresponding to the lock request version
+  lockret map[string]bool
+
+  verexists map[int64]bool
+  prevret map[int64]bool
 }
 
 type dyingError struct {
@@ -40,15 +49,20 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
   defer ls.mu.Unlock()
 
   locked, _ := ls.locks[args.Lockname]
+  // lastver, _ := ls.lockver[args.Lockname]
+  // lastret, _ := ls.lockret[args.Lockname]
 
-  if ls.dying {
-    reply.OK = false
-    fmt.Printf("%s Lock(%s:%t) dying return \n", 
-      logHeader(ls.am_primary),
-      args.Lockname, 
-      locked)
-    return &dyingError{"dying"}
-  }
+  exists, _ := ls.verexists[args.Version]
+  prevret, _ := ls.prevret[args.Version]
+
+  // if ls.dying {
+  //   reply.OK = false
+  //   fmt.Printf("%s Lock(%s:%t) dying return \n", 
+  //     logHeader(ls.am_primary),
+  //     args.Lockname, 
+  //     locked)
+  //   return &dyingError{"dying"}
+  // }
 
   // check if i am primary
   if ls.am_primary {
@@ -57,18 +71,45 @@ func (ls *LockServer) Lock(args *LockArgs, reply *LockReply) error {
     defer call(ls.backup, "LockServer.Lock", args, backup_reply)
   }
 
-  if locked {
-    reply.OK = false
+  if exists {
+    reply.OK = prevret
   } else {
-    reply.OK = true
-    ls.locks[args.Lockname] = true
+    if locked {
+      reply.OK = false
+    } else {
+      reply.OK = true
+      ls.locks[args.Lockname] = true
+    }
+    ls.verexists[args.Version] = true
+    ls.prevret[args.Version] = reply.OK
   }
+
+  // if exists == args.Version {
+  //   // this could only happen in backup, need not handle 
+  //   reply.OK = lastret
+  // } else {
+  //   // this is a new request
+  //   if locked {
+  //     reply.OK = false
+  //     ls.lockver[args.Lockname] = args.Version
+  //     ls.lockret[args.Lockname] = false
+  //   } else {
+  //     reply.OK = true
+  //     ls.locks[args.Lockname] = true
+  //     ls.lockver[args.Lockname] = args.Version
+  //     ls.lockret[args.Lockname] = true
+  //   }
+  // }
   
-  fmt.Printf("%s Lock(%s:%t)=%t \n", 
-    logHeader(ls.am_primary),
-    args.Lockname, 
-    locked, 
-    reply.OK)
+  // fmt.Printf("%s Lock(%s:%t)=%t ver=%d lver=%d lret=%t dying=%t\n", 
+  //   logHeader(ls.am_primary),
+  //   args.Lockname, 
+  //   locked, 
+  //   reply.OK,
+  //   args.Version,
+  //   lastver,
+  //   lastret,
+  //   ls.dying)
 
 
   return nil
@@ -84,15 +125,20 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
   defer ls.mu.Unlock()
 
   locked, _ := ls.locks[args.Lockname]
+  // lastver, _ := ls.lockver[args.Lockname]
+  // lastret, _ := ls.lockret[args.Lockname]
 
-  if ls.dying {
-    reply.OK = false
-    fmt.Printf("%s Unlock(%s:%t) dying return \n", 
-      logHeader(ls.am_primary),
-      args.Lockname, 
-      locked)
-    return &dyingError{"dying"}
-  }
+  exists, _ := ls.verexists[args.Version]
+  prevret, _ := ls.prevret[args.Version]
+
+  // if ls.dying {
+  //   reply.OK = false
+  //   fmt.Printf("%s Unlock(%s:%t) dying return \n", 
+  //     logHeader(ls.am_primary),
+  //     args.Lockname, 
+  //     locked)
+  //   return &dyingError{"dying"}
+  // }
 
   // check if i am primary
   if ls.am_primary {
@@ -101,18 +147,45 @@ func (ls *LockServer) Unlock(args *UnlockArgs, reply *UnlockReply) error {
     defer call(ls.backup, "LockServer.Unlock", args, backup_reply)
   }
 
-  if locked {
-    reply.OK = true
-    ls.locks[args.Lockname] = false
+  if exists {
+    reply.OK = prevret
   } else {
-    reply.OK = false
+    if locked {
+      reply.OK = true
+      ls.locks[args.Lockname] = false
+    } else {
+      reply.OK = false
+    }
+    ls.verexists[args.Version] = true
+    ls.prevret[args.Version] = reply.OK
   }
 
-  fmt.Printf("%s Unlock(%s:%t)=%t\n", 
-    logHeader(ls.am_primary),
-    args.Lockname, 
-    locked, 
-    reply.OK)
+  // if lastver == args.Version {
+  //   reply.OK = lastret
+  // } else {
+  //   if locked {
+  //     reply.OK = true
+  //     ls.locks[args.Lockname] = false
+  //     ls.lockver[args.Lockname] = args.Version
+  //     ls.lockret[args.Lockname] = true
+  //   } else {
+  //     reply.OK = false
+  //     ls.lockver[args.Lockname] = args.Version
+  //     ls.lockret[args.Lockname] = false
+  //   }
+  // }
+
+  
+
+  // fmt.Printf("%s Unlock(%s:%t)=%t ver=%d lver=%d lret=%t dying=%t\n", 
+  //   logHeader(ls.am_primary),
+  //   args.Lockname, 
+  //   locked, 
+  //   reply.OK,
+  //   args.Version,
+  //   lastver,
+  //   lastret,
+  //   ls.dying)
 
   return nil
 }
@@ -152,6 +225,11 @@ func StartServer(primary string, backup string, am_primary bool) *LockServer {
   ls.backup = backup
   ls.am_primary = am_primary
   ls.locks = map[string]bool{}
+  ls.lockver = map[string]int64{}
+  ls.lockret = map[string]bool{}
+
+  ls.verexists = map[int64]bool{}
+  ls.prevret = map[int64]bool{}
 
   // Your initialization code here.
 

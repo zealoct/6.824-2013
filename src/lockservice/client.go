@@ -1,6 +1,9 @@
 package lockservice
 
 import "net/rpc"
+//import "fmt"
+import "crypto/rand"
+import "math/big"
 
 //
 // the lockservice Clerk lives in the client
@@ -51,6 +54,13 @@ func call(srv string, rpcname string,
   return false
 }
 
+func nrand() int64 {
+  max := big.NewInt(int64(1) << 62)
+  bigx, _ := rand.Int(rand.Reader, max)
+  x := bigx.Int64()
+  return x
+}
+
 //
 // ask the lock service for a lock.
 // returns true if the lock service
@@ -62,11 +72,17 @@ func (ck *Clerk) Lock(lockname string) bool {
   // prepare the arguments.
   args := &LockArgs{}
   args.Lockname = lockname
+  args.Version = nrand()
   var reply LockReply
   
   // send an RPC request, wait for the reply.
+  //fmt.Printf("Lock %s, ver=%d\n", lockname, args.Version)
   ok := call(ck.servers[0], "LockServer.Lock", args, &reply)
+  //fmt.Printf("Lock, P return %t, %t\n", ok, reply.OK)
+
   if ok == false {
+    //fmt.Println("Lock, P died, call B\n")
+
     ok = call(ck.servers[1], "LockServer.Lock", args, &reply)
     if ok == false {
       return false  
@@ -84,15 +100,20 @@ func (ck *Clerk) Lock(lockname string) bool {
 //
 
 func (ck *Clerk) Unlock(lockname string) bool {
-
   // Your code here.
   args := &UnlockArgs{}
   args.Lockname = lockname
+  args.Version = nrand()
   var reply UnlockReply
   
   // send an RPC request, wait for the reply.
+  //fmt.Printf("Unlock %s, ver=%d\n", lockname, args.Version)
   ok := call(ck.servers[0], "LockServer.Unlock", args, &reply)
+  //fmt.Printf("Unlock, P return %t, %t\n", ok, reply.OK)
+
   if ok == false {
+    //fmt.Println("Unlock, P died, call B\n")
+
     ok = call(ck.servers[1], "LockServer.Unlock", args, &reply)
     if ok == false {
       return false  
