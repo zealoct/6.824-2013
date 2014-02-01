@@ -34,7 +34,7 @@ type ViewServer struct {
 // server Ping RPC handler.
 //
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
-	fmt.Printf("\nPing: %v, cur:%s, new:%t\n", args, vs.current_view, vs.clients[args.Me] == nil)
+	// fmt.Printf("\nPing: %v, cur:%s, new:%t\n", args, vs.current_view, vs.clients[args.Me] == nil)
 	// Your code here.
 	if args.Viewnum == 0 && vs.clients[args.Me] == nil {
 		// a new server ping!
@@ -46,14 +46,14 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 	if args.Me == vs.current_view.Primary &&
 		args.Viewnum == 0 && vs.acked {
 		// check primary failed and restarted within an Interval
-		fmt.Printf("primary restart detected\n")
+		// fmt.Printf("primary restart detected\n")
 		vs.primary_restarted = true
 	}
 
 	if args.Me == vs.current_view.Primary &&
 		args.Viewnum == vs.current_view.Viewnum {
 		// current view is acked by primary server
-		fmt.Printf("primary acked\n")
+		// fmt.Printf("primary acked\n")
 		vs.acked = true
 	}
 
@@ -83,7 +83,7 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 // accordingly.
 //
 func (vs *ViewServer) tick() {
-	fmt.Printf("\n..Tick current view:%v acked:%t\n", vs.current_view, vs.acked)
+	// fmt.Printf("\n..Tick current view:%v acked:%t\n", vs.current_view, vs.acked)
 	// Your code here.
 	var idle_client, inited_idle_client *ClientInfo
 	currentTime := time.Now()
@@ -99,12 +99,12 @@ func (vs *ViewServer) tick() {
 		// fetch the first idle client, could be useful
 		if v.idle && !v.dead && idle_client == nil {
 			idle_client = v
-			fmt.Printf("..Got idle client:%s\n", idle_client.name)
+			// fmt.Printf("..Got idle client:%s\n", idle_client.name)
 		}
 
 		if v.idle && !v.dead && v.last_viewnum == vs.current_view.Viewnum && inited_idle_client == nil {
 			inited_idle_client = v
-			fmt.Printf("..Got inited idle client:%s\n", idle_client.name)
+			// fmt.Printf("..Got inited idle client:%s\n", idle_client.name)
 		}
 	}
 
