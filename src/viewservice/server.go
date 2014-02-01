@@ -9,10 +9,11 @@ import "fmt"
 import "os"
 
 type ClientInfo struct {
-	name      string
-	last_ping time.Time
-	idle      bool
-	dead      bool
+	name         string
+	last_ping    time.Time
+	last_viewnum uint
+	idle         bool
+	dead         bool
 }
 
 type ViewServer struct {
@@ -57,6 +58,7 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 	}
 
 	vs.clients[args.Me].last_ping = time.Now()
+	vs.clients[args.Me].last_viewnum = args.Viewnum
 	vs.clients[args.Me].dead = false
 
 	reply.View = vs.current_view
@@ -83,7 +85,7 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 func (vs *ViewServer) tick() {
 	fmt.Printf("\n..Tick current view:%v acked:%t\n", vs.current_view, vs.acked)
 	// Your code here.
-	var idle_client *ClientInfo
+	var idle_client, inited_idle_client *ClientInfo
 	currentTime := time.Now()
 
 	// update the state of all clients
@@ -98,6 +100,11 @@ func (vs *ViewServer) tick() {
 		if v.idle && !v.dead && idle_client == nil {
 			idle_client = v
 			fmt.Printf("..Got idle client:%s\n", idle_client.name)
+		}
+
+		if v.idle && !v.dead && v.last_viewnum == vs.current_view.Viewnum && inited_idle_client == nil {
+			inited_idle_client = v
+			fmt.Printf("..Got inited idle client:%s\n", idle_client.name)
 		}
 	}
 
@@ -119,22 +126,24 @@ func (vs *ViewServer) tick() {
 		}
 
 		if cv.Primary == "" && cv.Backup == "" {
-			if idle_client != nil {
-				cv.Primary = idle_client.name
+			if inited_idle_client != nil {
+				cv.Primary = inited_idle_client.name
 				cv.Viewnum++
 
 				vs.acked = false
 				vs.primary_restarted = false
 
-				idle_client.idle = false
+				inited_idle_client.idle = false
 			}
 		} else if cv.Primary == "" {
-			cv.Primary = cv.Backup
-			cv.Backup = ""
-			cv.Viewnum++
+			if vs.clients[cv.Backup].last_viewnum == cv.Viewnum {
+				cv.Primary = cv.Backup
+				cv.Backup = ""
+				cv.Viewnum++
 
-			vs.acked = false
-			vs.primary_restarted = false
+				vs.acked = false
+				vs.primary_restarted = false
+			}
 		} else if cv.Backup == "" {
 			if idle_client != nil {
 				cv.Backup = idle_client.name
