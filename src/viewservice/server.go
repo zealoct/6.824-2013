@@ -9,11 +9,11 @@ import "fmt"
 import "os"
 
 type ClientInfo struct {
-	name         string
-	last_ping    time.Time
-	last_viewnum uint
-	idle         bool
-	dead         bool
+	name         string    // client's name
+	last_ping    time.Time // Time of last Ping
+	last_viewnum uint      // Viewnum of last Ping
+	idle         bool      // whether this client is idle
+	dead         bool      // whether this client is dead
 }
 
 type ViewServer struct {
@@ -24,10 +24,10 @@ type ViewServer struct {
 
 	// Your declarations here.
 	current_view      View
-	acked             bool
-	primary_restarted bool
+	acked             bool // current view is acked by P
+	primary_restarted bool // P has restarted within DeadPings * PingInterval
 
-	clients map[string]*ClientInfo
+	clients map[string]*ClientInfo // list of k/v servers
 }
 
 //
