@@ -8,12 +8,22 @@ import "sync"
 import "fmt"
 import "os"
 
+const (
+	TICK_DEBUG = false
+	PING_DEBUG = false
+	GET_DEBUG  = false
+)
+
 type ClientInfo struct {
 	name         string    // client's name
 	last_ping    time.Time // Time of last Ping
 	last_viewnum uint      // Viewnum of last Ping
 	idle         bool      // whether this client is idle
 	dead         bool      // whether this client is dead
+}
+
+func (ci ClientInfo) String() string {
+	return fmt.Sprintf("[N:%s, I:%t, D:%t]", ci.name, ci.idle, ci.dead)
 }
 
 type ViewServer struct {
@@ -34,7 +44,11 @@ type ViewServer struct {
 // server Ping RPC handler.
 //
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
-	// fmt.Printf("\nPing: %v, cur:%s, new:%t\n", args, vs.current_view, vs.clients[args.Me] == nil)
+	if PING_DEBUG {
+		fmt.Printf("\nPing: %v\n", args)
+		fmt.Printf("----cur:%s, new:%t\n", vs.current_view, vs.clients[args.Me] == nil)
+	}
+
 	// Your code here.
 	if args.Viewnum == 0 && vs.clients[args.Me] == nil {
 		// a new server ping!
@@ -44,16 +58,20 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 	}
 
 	if args.Me == vs.current_view.Primary &&
-		args.Viewnum == 0 && vs.acked {
+		args.Viewnum == 0 && vs.current_view.Viewnum != 0 && vs.acked {
 		// check primary failed and restarted within an Interval
-		// fmt.Printf("primary restart detected\n")
+		if PING_DEBUG {
+			fmt.Printf("----primary restart detected\n")
+		}
 		vs.primary_restarted = true
 	}
 
 	if args.Me == vs.current_view.Primary &&
 		args.Viewnum == vs.current_view.Viewnum {
 		// current view is acked by primary server
-		// fmt.Printf("primary acked\n")
+		if PING_DEBUG {
+			fmt.Printf("----primary acked\n")
+		}
 		vs.acked = true
 	}
 
@@ -83,7 +101,12 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 // accordingly.
 //
 func (vs *ViewServer) tick() {
-	// fmt.Printf("\n..Tick current view:%v acked:%t\n", vs.current_view, vs.acked)
+	if TICK_DEBUG {
+		fmt.Printf("\nTick() VS\n")
+		fmt.Printf("----current view:%v acked:%t\n", vs.current_view, vs.acked)
+		fmt.Printf("----clients:%s\n", vs.clients)
+	}
+
 	// Your code here.
 	var idle_client, inited_idle_client *ClientInfo
 	currentTime := time.Now()
@@ -91,7 +114,10 @@ func (vs *ViewServer) tick() {
 	// update the state of all clients
 	for _, v := range vs.clients {
 		since_last_ping := currentTime.Sub(v.last_ping)
-		if since_last_ping > PingInterval {
+		if since_last_ping > PingInterval && vs.acked {
+			if TICK_DEBUG {
+				fmt.Printf("----Ping time out, mark idle & dead\n")
+			}
 			v.dead = true
 			v.idle = true
 		}
@@ -99,12 +125,16 @@ func (vs *ViewServer) tick() {
 		// fetch the first idle client, could be useful
 		if v.idle && !v.dead && idle_client == nil {
 			idle_client = v
-			// fmt.Printf("..Got idle client:%s\n", idle_client.name)
+			if TICK_DEBUG {
+				fmt.Printf("----Got idle client:%s\n", idle_client.name)
+			}
 		}
 
 		if v.idle && !v.dead && v.last_viewnum == vs.current_view.Viewnum && inited_idle_client == nil {
 			inited_idle_client = v
-			// fmt.Printf("..Got inited idle client:%s\n", idle_client.name)
+			if TICK_DEBUG {
+				fmt.Printf("----Got inited idle client:%s\n", inited_idle_client.name)
+			}
 		}
 	}
 
@@ -117,6 +147,9 @@ func (vs *ViewServer) tick() {
 		}
 
 		if vs.primary_restarted {
+			if TICK_DEBUG {
+				fmt.Printf("----primary_restarted, mark idle\n")
+			}
 			vs.clients[cv.Primary].idle = true
 			cv.Primary = ""
 		}
