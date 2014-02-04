@@ -44,6 +44,11 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 		fmt.Printf("GET(%s) me:%s", args.Key, pb.me)
 	}
 	// Your code here.
+	if pb.role != ROLEP {
+		reply.Err = ErrWrongServer
+		return nil
+	}
+
 	var ok bool
 	reply.Value, ok = pb.db[args.Key]
 	if ok {
