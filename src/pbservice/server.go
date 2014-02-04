@@ -16,11 +16,12 @@ const (
 	ROLEB = "BACKUP"
 	ROLEI = "IDLE"
 
-	GET_DEBUG  = true
-	PUT_DEBUG  = true
-	SYNC_DEBUG = true
-	FWD_DEBUG  = true
-	TICK_DEBUG = true
+	SERVER_DEBUG = false
+	GET_DEBUG    = true && SERVER_DEBUG
+	PUT_DEBUG    = true && SERVER_DEBUG
+	SYNC_DEBUG   = true && SERVER_DEBUG
+	FWD_DEBUG    = true && SERVER_DEBUG
+	TICK_DEBUG   = false && SERVER_DEBUG
 )
 
 type PBServer struct {
@@ -61,9 +62,12 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 func (pb *PBServer) Put(args *PutArgs, reply *PutReply) error {
 
 	// Your code here.
+	if PUT_DEBUG {
+		fmt.Printf("\nPut(%s => %s) [%s]\n", args.Key, args.Value, pb.me)
+	}
 
 	// Put re quests come from clients, so I should be P
-	if pb.role != ROLEP {
+	if pb.updateView(); pb.role != ROLEP {
 		reply.Err = ErrWrongServer
 		return nil
 	}
