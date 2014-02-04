@@ -92,6 +92,10 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 	// Your code here.
 	reply.View = vs.current_view
 
+	if GET_DEBUG {
+		fmt.Printf("Get, ret %s\n", reply.View)
+	}
+
 	return nil
 }
 
@@ -114,9 +118,9 @@ func (vs *ViewServer) tick() {
 	// update the state of all clients
 	for _, v := range vs.clients {
 		since_last_ping := currentTime.Sub(v.last_ping)
-		if since_last_ping > PingInterval && vs.acked {
+		if !v.dead && since_last_ping > PingInterval && vs.acked {
 			if TICK_DEBUG {
-				fmt.Printf("----Ping time out, mark idle & dead\n")
+				fmt.Printf("----[%s] Ping time out, mark idle & dead\n", v.name)
 			}
 			v.dead = true
 			v.idle = true
