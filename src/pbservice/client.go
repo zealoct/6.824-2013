@@ -2,20 +2,26 @@ package pbservice
 
 import "viewservice"
 import "net/rpc"
+import "fmt"
+
 // You'll probably need to uncomment this:
 // import "time"
 
+const (
+	GET_CLIENT_DEBUG = false
+	PUT_CLIENT_DEBUG = false
+)
 
 type Clerk struct {
-  vs *viewservice.Clerk
+	vs    *viewservice.Clerk
+	cview viewservice.View
 }
 
 func MakeClerk(vshost string, me string) *Clerk {
-  ck := new(Clerk)
-  ck.vs = viewservice.MakeClerk(me, vshost)
-  return ck
+	ck := new(Clerk)
+	ck.vs = viewservice.MakeClerk(me, vshost)
+	return ck
 }
-
 
 //
 // call() sends an RPC to the rpcname handler on server srv
@@ -34,18 +40,22 @@ func MakeClerk(vshost string, me string) *Clerk {
 // please don't change this function.
 //
 func call(srv string, rpcname string,
-          args interface{}, reply interface{}) bool {
-  c, errx := rpc.Dial("unix", srv)
-  if errx != nil {
-    return false
-  }
-  defer c.Close()
-    
-  err := c.Call(rpcname, args, reply)
-  if err == nil {
-    return true
-  }
-  return false
+	args interface{}, reply interface{}) bool {
+	c, errx := rpc.Dial("unix", srv)
+	if errx != nil {
+		return false
+	}
+	defer c.Close()
+
+	err := c.Call(rpcname, args, reply)
+	if err == nil {
+		return true
+	}
+	return false
+}
+
+func (ck *Clerk) updateView() {
+	ck.cview, _ = ck.vs.Get()
 }
 
 //
@@ -57,9 +67,49 @@ func call(srv string, rpcname string,
 //
 func (ck *Clerk) Get(key string) string {
 
-  // Your code here.
+	// Your code here.
+	if GET_CLIENT_DEBUG {
+		fmt.Printf("\n[Client] Get(%s)\n", key)
+	}
 
-  return "???"
+	// make sure we'v got a primary
+	for ck.cview.Primary == "" {
+		ck.updateView()
+	}
+
+	args := &GetArgs{}
+	var reply GetReply
+	args.Key = key
+
+	if GET_CLIENT_DEBUG {
+		fmt.Printf("[Client] ---- Primary:%s\n", ck.cview.Primary)
+	}
+
+	ok := call(ck.cview.Primary, "PBServer.Get", args, &reply)
+
+	if GET_CLIENT_DEBUG {
+		fmt.Printf("[Client] ---- ok:%t, reply:%s\n", ok, reply)
+	}
+
+	for ok == false || reply.Err == ErrWrongServer {
+		ck.updateView()
+
+		if GET_CLIENT_DEBUG {
+			fmt.Printf("[Client] ---- retry Primary:%s\n", ck.cview.Primary)
+		}
+
+		ok = call(ck.cview.Primary, "PBServer.Get", args, &reply)
+
+		if GET_CLIENT_DEBUG {
+			fmt.Printf("[Client] ---- ok:%t, reply:%s\n", ok, reply)
+		}
+	}
+
+	if reply.Err == OK {
+		return reply.Value
+	}
+
+	return fmt.Sprintf("%s", reply.Err)
 }
 
 //
@@ -68,5 +118,35 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) Put(key string, value string) {
 
-  // Your code here.
+	if PUT_CLIENT_DEBUG {
+		fmt.Printf("\nClient Put (%s => %s)\n", key, value)
+	}
+	// Your code here.
+	// make sure we'v got a primary
+	for ck.cview.Primary == "" {
+		ck.updateView()
+	}
+
+	if PUT_CLIENT_DEBUG {
+		fmt.Printf("---Primary: %s\n", ck.cview.Primary)
+	}
+
+	args := &PutArgs{key, value}
+	reply := PutReply{}
+
+	ok := call(ck.cview.Primary, "PBServer.Put", args, &reply)
+
+	for ok == false {
+		ck.updateView()
+		ok = call(ck.cview.Primary, "PBServer.Put", args, &reply)
+	}
+
+	if PUT_CLIENT_DEBUG {
+		fmt.Printf("Err:%s\n", reply.Err)
+	}
+
+	if reply.Err == OK {
+		return
+	}
+
 }
