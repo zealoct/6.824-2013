@@ -142,7 +142,7 @@ func (pb *PBServer) Sync(args *SyncArgs, reply *SyncReply) error {
 	if SYNC_DEBUG {
 		fmt.Printf("Sync\n ")
 		fmt.Printf("---- I'm %s\n, role:%s\n", pb.me, pb.role)
-		fmt.Printf("---- db:%v\n", args.db)
+		fmt.Printf("---- db:%v\n", args.DB)
 	}
 
 	if pb.role == ROLEP || pb.role == ROLEI {
@@ -150,7 +150,7 @@ func (pb *PBServer) Sync(args *SyncArgs, reply *SyncReply) error {
 		return nil
 	}
 
-	pb.db = args.db
+	pb.db = args.DB
 	reply.Err = OK
 
 	return nil
@@ -184,33 +184,33 @@ func (pb *PBServer) updateView() {
 	}
 
 	if pb.role == ROLEP && next_view.Backup != "" {
-		// args := &SyncArgs{}
-		// reply := &SyncReply{}
+		args := &SyncArgs{}
+		reply := &SyncReply{}
 
-		// args.db = map[string]string{}
+		args.DB = pb.db
 
-		for k, v := range pb.db {
-			// fmt.Printf("---- syncing %s, %s\n", k, v)
-			args := &PutArgs{k, v}
-			reply := &PutReply{}
+		// for k, v := range pb.db {
+		// 	fmt.Printf("---- syncing %s, %s\n", k, v)
+		// 	// args := &PutArgs{k, v}
+		// 	// reply := &PutReply{}
 
-			pb.forward(args, reply, next_view.Backup)
-			// args.db[k] = v
+		// 	// pb.forward(args, reply, next_view.Backup)
+		// 	args.db[k] = v
+		// }
+
+		if TICK_DEBUG {
+			fmt.Printf("---- Sync(%v)\n", args)
 		}
 
-		// if TICK_DEBUG {
-		// 	fmt.Printf("---- Sync(%v)\n", args)
-		// }
+		ok := call(next_view.Backup, "PBServer.Sync", args, reply)
 
-		// ok := call(next_view.Backup, "PBServer.Sync", args, reply)
+		if TICK_DEBUG {
+			fmt.Printf("---- Sync ok=%t reply=%v\n", ok, reply)
+		}
 
-		// if TICK_DEBUG {
-		// 	fmt.Printf("---- Sync ok=%t reply=%v\n", ok, reply)
-		// }
-
-		// if ok == false || reply.Err != OK {
-		// 	fmt.Errorf("!!!! Sync to Backup %s return ok:%t err %s\n", next_view.Backup, ok, reply.Err)
-		// }
+		if ok == false || reply.Err != OK {
+			fmt.Errorf("!!!! Sync to Backup %s return ok:%t err %s\n", next_view.Backup, ok, reply.Err)
+		}
 	}
 
 	// update current view

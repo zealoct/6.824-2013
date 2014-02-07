@@ -30,7 +30,7 @@ type GetReply struct {
 // Your RPC definitions here.
 
 type SyncArgs struct {
-	db map[string]string
+	DB map[string]string
 }
 
 type SyncReply struct {
