@@ -29,18 +29,31 @@ import "sync"
 import "fmt"
 import "math/rand"
 
+type slot_t struct {
+	v interface{}
+}
+
+type Proposal struct {
+	// should not use PNum 0
+	PNum  int
+	Value interface{}
+}
 
 type Paxos struct {
-  mu sync.Mutex
-  l net.Listener
-  dead bool
-  unreliable bool
-  rpcCount int
-  peers []string
-  me int // index into peers[]
+	mu         sync.Mutex
+	l          net.Listener
+	dead       bool
+	unreliable bool
+	rpcCount   int
+	peers      []string
+	me         int // index into peers[]
 
+	// Your data here.
+	APa map[int]Proposal
+	APr map[int]Proposal
 
-  // Your data here.
+	Lslots map[int]slot_t
+	z_i    int
 }
 
 //
@@ -60,23 +73,69 @@ type Paxos struct {
 // please do not change this function.
 //
 func call(srv string, name string, args interface{}, reply interface{}) bool {
-  c, err := rpc.Dial("unix", srv)
-  if err != nil {
-    err1 := err.(*net.OpError)
-    if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
-      fmt.Printf("paxos Dial() failed: %v\n", err1)
-    }
-    return false
-  }
-  defer c.Close()
-    
-  err = c.Call(name, args, reply)
-  if err == nil {
-    return true
-  }
-  return false
+	c, err := rpc.Dial("unix", srv)
+	if err != nil {
+		err1 := err.(*net.OpError)
+		if err1.Err != syscall.ENOENT && err1.Err != syscall.ECONNREFUSED {
+			fmt.Printf("paxos Dial() failed: %v\n", err1)
+		}
+		return false
+	}
+	defer c.Close()
+
+	err = c.Call(name, args, reply)
+	if err == nil {
+		return true
+	}
+	return false
 }
 
+/* Proposer
+ * send prepare request for pNum in slot seq
+ * return
+ * - if OK to send accept request
+ * - highest-numbered proposal
+ */
+func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
+
+	return false, Err
+}
+
+/* Acceptor
+ * handler for prepare request
+ */
+func (px *Paxos) Prepare(args PrepareArgs, reply PrepareReply) error {
+	return nil
+}
+
+/* Proposer
+ * send accept requests
+ * return true if success
+ */
+func (px *Paxos) send_accept(seq int, p Proposal) bool {
+	return false
+}
+
+/* Acceptor
+ * handler for Accept request
+ */
+func (px *Paxos) Accept(args AcceptArgs, reply AcceptReply) error {
+	return nil
+}
+
+/* Proposer
+ * send decided value to all
+ */
+func (px *Paxos) send_decided(seq int, v interface{}) {
+
+}
+
+/* Learner
+ * handler for decide notification
+ */
+func (px *Paxos) Decided(args DecdidedArgs, reply DecidedReply) error {
+	return nil
+}
 
 //
 // the application wants paxos to start agreement on
@@ -86,7 +145,40 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 // is reached.
 //
 func (px *Paxos) Start(seq int, v interface{}) {
-  // Your code here.
+	// run Paxos algorithm in a new thread(run the Paxos protocol concurrently)
+	// play the role of proposer
+
+	// Your code here.
+
+	// I'm Proposer
+	go func() {
+		for {
+			n := px.APr[seq].PNum + 1
+			prepare_ok, p := px.send_prepare(seq, n)
+			if !prepare_ok {
+				continue
+			}
+
+			np := Proposal{}
+
+			// no proposal yet, use v
+			if p.PNum == 0 {
+				np.Value = v
+			} else {
+				np.Value = p.Value
+			}
+
+			np.PNum = n
+
+			accept_ok := px.send_accept(seq, np)
+			if !accept_ok {
+				continue
+			}
+
+			px.send_decided(seq, np.Value)
+			break
+		}
+	}()
 }
 
 //
@@ -96,7 +188,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 // see the comments for Min() for more explanation.
 //
 func (px *Paxos) Done(seq int) {
-  // Your code here.
+	// Your code here.
 }
 
 //
@@ -105,8 +197,8 @@ func (px *Paxos) Done(seq int) {
 // this peer.
 //
 func (px *Paxos) Max() int {
-  // Your code here.
-  return 0
+	// Your code here.
+	return 0
 }
 
 //
@@ -139,10 +231,10 @@ func (px *Paxos) Max() int {
 // life, it will need to catch up on instances that it
 // missed -- the other peers therefor cannot forget these
 // instances.
-// 
+//
 func (px *Paxos) Min() int {
-  // You code here.
-  return 0
+	// You code here.
+	return 0
 }
 
 //
@@ -153,10 +245,9 @@ func (px *Paxos) Min() int {
 // it should not contact other Paxos peers.
 //
 func (px *Paxos) Status(seq int) (bool, interface{}) {
-  // Your code here.
-  return false, nil
+	// Your code here.
+	return false, nil
 }
-
 
 //
 // tell the peer to shut itself down.
@@ -164,10 +255,10 @@ func (px *Paxos) Status(seq int) (bool, interface{}) {
 // please do not change this function.
 //
 func (px *Paxos) Kill() {
-  px.dead = true
-  if px.l != nil {
-    px.l.Close()
-  }
+	px.dead = true
+	if px.l != nil {
+		px.l.Close()
+	}
 }
 
 //
@@ -176,64 +267,62 @@ func (px *Paxos) Kill() {
 // are in peers[]. this servers port is peers[me].
 //
 func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
-  px := &Paxos{}
-  px.peers = peers
-  px.me = me
+	px := &Paxos{}
+	px.peers = peers
+	px.me = me
 
+	// Your initialization code here.
 
-  // Your initialization code here.
+	if rpcs != nil {
+		// caller will create socket &c
+		rpcs.Register(px)
+	} else {
+		rpcs = rpc.NewServer()
+		rpcs.Register(px)
 
-  if rpcs != nil {
-    // caller will create socket &c
-    rpcs.Register(px)
-  } else {
-    rpcs = rpc.NewServer()
-    rpcs.Register(px)
+		// prepare to receive connections from clients.
+		// change "unix" to "tcp" to use over a network.
+		os.Remove(peers[me]) // only needed for "unix"
+		l, e := net.Listen("unix", peers[me])
+		if e != nil {
+			log.Fatal("listen error: ", e)
+		}
+		px.l = l
 
-    // prepare to receive connections from clients.
-    // change "unix" to "tcp" to use over a network.
-    os.Remove(peers[me]) // only needed for "unix"
-    l, e := net.Listen("unix", peers[me]);
-    if e != nil {
-      log.Fatal("listen error: ", e);
-    }
-    px.l = l
-    
-    // please do not change any of the following code,
-    // or do anything to subvert it.
-    
-    // create a thread to accept RPC connections
-    go func() {
-      for px.dead == false {
-        conn, err := px.l.Accept()
-        if err == nil && px.dead == false {
-          if px.unreliable && (rand.Int63() % 1000) < 100 {
-            // discard the request.
-            conn.Close()
-          } else if px.unreliable && (rand.Int63() % 1000) < 200 {
-            // process the request but force discard of reply.
-            c1 := conn.(*net.UnixConn)
-            f, _ := c1.File()
-            err := syscall.Shutdown(int(f.Fd()), syscall.SHUT_WR)
-            if err != nil {
-              fmt.Printf("shutdown: %v\n", err)
-            }
-            px.rpcCount++
-            go rpcs.ServeConn(conn)
-          } else {
-            px.rpcCount++
-            go rpcs.ServeConn(conn)
-          }
-        } else if err == nil {
-          conn.Close()
-        }
-        if err != nil && px.dead == false {
-          fmt.Printf("Paxos(%v) accept: %v\n", me, err.Error())
-        }
-      }
-    }()
-  }
+		// please do not change any of the following code,
+		// or do anything to subvert it.
 
+		// create a thread to accept RPC connections
+		go func() {
+			for px.dead == false {
+				conn, err := px.l.Accept()
+				if err == nil && px.dead == false {
+					if px.unreliable && (rand.Int63()%1000) < 100 {
+						// discard the request.
+						conn.Close()
+					} else if px.unreliable && (rand.Int63()%1000) < 200 {
+						// process the request but force discard of reply.
+						c1 := conn.(*net.UnixConn)
+						f, _ := c1.File()
+						err := syscall.Shutdown(int(f.Fd()), syscall.SHUT_WR)
+						if err != nil {
+							fmt.Printf("shutdown: %v\n", err)
+						}
+						px.rpcCount++
+						go rpcs.ServeConn(conn)
+					} else {
+						px.rpcCount++
+						go rpcs.ServeConn(conn)
+					}
+				} else if err == nil {
+					conn.Close()
+				}
+				if err != nil && px.dead == false {
+					fmt.Printf("Paxos(%v) accept: %v\n", me, err.Error())
+				}
+			}
+		}()
+	}
 
-  return px
+	return px
 }
