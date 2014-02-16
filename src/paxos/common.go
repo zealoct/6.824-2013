@@ -29,7 +29,7 @@ type AcceptReply struct {
 
 type DecdidedArgs struct {
 	Seq int
-	v   interface{}
+	V   interface{}
 }
 
 type DecidedReply struct {

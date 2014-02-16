@@ -29,8 +29,16 @@ import "sync"
 import "fmt"
 import "math/rand"
 
-type slot_t struct {
-	v interface{}
+const (
+	DBG_PREPARE  = false
+	DBG_ACCEPT   = false
+	DBG_PROPOSER = true
+	DBG_DECIDED  = true
+)
+
+type Slot_t struct {
+	Decided bool
+	V       interface{}
 }
 
 type Proposal struct {
@@ -49,11 +57,18 @@ type Paxos struct {
 	me         int // index into peers[]
 
 	// Your data here.
-	APa map[int]Proposal
-	APr map[int]Proposal
+	peers_count int
+	majority    int
+	max_seq     int
+	// highest number ever passed to Done
+	z int
 
-	Lslots map[int]slot_t
-	z_i    int
+	// [A] highest accept seen
+	APa map[int]Proposal
+	// [A] highest prepare seen
+	APp map[int]int
+
+	Lslots map[int]Slot_t
 }
 
 //
@@ -83,11 +98,21 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	}
 	defer c.Close()
 
+	fmt.Printf("Call srv:%s name:%s\n", srv, name)
 	err = c.Call(name, args, reply)
+	fmt.Printf("After Call %s, err:%v, rpl:%v\n", srv, err, reply)
+
 	if err == nil {
 		return true
 	}
 	return false
+}
+
+func (px *Paxos) mylog(dbg bool, funcname, msg string) {
+	if dbg {
+		fmt.Printf("[%s] me:%s\n", funcname, px.me)
+		fmt.Printf("...%s\n", msg)
+	}
 }
 
 /* Proposer
@@ -97,14 +122,45 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
  * - highest-numbered proposal
  */
 func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
+	ok_count := 0
+	p := Proposal{}
 
-	return false, Err
+	for _, peer := range px.peers {
+		args := &PrepareArgs{}
+		reply := &PrepareReply{}
+
+		args.Seq = seq
+		args.PNum = pNum
+
+		ok := call(peer, "Paxos.Prepare", args, reply)
+
+		// TODO: what if I got only one Reject?
+
+		if ok && reply.Err == OK {
+			ok_count++
+			if reply.Proposal.PNum > p.PNum {
+				p = reply.Proposal
+			}
+		}
+	}
+
+	return (ok_count > px.majority), p
 }
 
 /* Acceptor
  * handler for prepare request
  */
-func (px *Paxos) Prepare(args PrepareArgs, reply PrepareReply) error {
+func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
+	if args.PNum > px.APp[args.Seq] {
+		// prepare request with higher Proposal Number
+		px.APp[args.Seq] = args.PNum
+		reply.Err = OK
+		reply.Proposal = px.APa[args.Seq]
+	} else {
+		// Already promised to Proposal with a higher Proposal Number
+		reply.Err = Reject
+		reply.Proposal = Proposal{}
+	}
 	return nil
 }
 
@@ -113,13 +169,36 @@ func (px *Paxos) Prepare(args PrepareArgs, reply PrepareReply) error {
  * return true if success
  */
 func (px *Paxos) send_accept(seq int, p Proposal) bool {
-	return false
+	ok_count := 0
+
+	for _, peer := range px.peers {
+		args := &AcceptArgs{}
+		reply := &AcceptReply{}
+
+		args.Seq = seq
+		args.Proposal = p
+
+		ok := call(peer, "Paxos.Accept", args, reply)
+
+		if ok && reply.Err == OK {
+			ok_count++
+		}
+	}
+
+	return (ok_count > px.majority)
 }
 
 /* Acceptor
  * handler for Accept request
  */
-func (px *Paxos) Accept(args AcceptArgs, reply AcceptReply) error {
+func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
+	if args.Proposal.PNum >= px.APp[args.Seq] {
+		px.APp[args.Seq] = args.Proposal.PNum
+		px.APa[args.Seq] = args.Proposal
+		reply.Err = OK
+	} else {
+		reply.Err = Reject
+	}
 	return nil
 }
 
@@ -127,13 +206,29 @@ func (px *Paxos) Accept(args AcceptArgs, reply AcceptReply) error {
  * send decided value to all
  */
 func (px *Paxos) send_decided(seq int, v interface{}) {
+	for _, peer := range px.peers {
+		args := &DecdidedArgs{}
+		reply := &DecidedReply{}
 
+		args.Seq = seq
+		args.V = v
+
+		call(peer, "Paxos.Decided", args, reply)
+	}
 }
 
 /* Learner
  * handler for decide notification
  */
-func (px *Paxos) Decided(args DecdidedArgs, reply DecidedReply) error {
+func (px *Paxos) Decided(args *DecdidedArgs, reply *DecidedReply) error {
+	if DBG_DECIDED {
+		fmt.Printf("[Decided] me:%d\n....Seq=%d V=%v\n", px.me, args.Seq, args.V)
+	}
+	px.Lslots[args.Seq] = Slot_t{true, args.V}
+	if args.Seq > px.max_seq {
+		px.max_seq = args.Seq
+	}
+	reply.Err = OK
 	return nil
 }
 
@@ -150,32 +245,50 @@ func (px *Paxos) Start(seq int, v interface{}) {
 
 	// Your code here.
 
+	if DBG_PROPOSER {
+		fmt.Printf("[Start] me:%d\n....Start seq=%d v=%v\n",
+			px.me, seq, v)
+	}
+
 	// I'm Proposer
 	go func() {
 		for {
-			n := px.APr[seq].PNum + 1
+			n := px.APp[seq] + 1
 			prepare_ok, p := px.send_prepare(seq, n)
 			if !prepare_ok {
 				continue
 			}
 
-			np := Proposal{}
+			new_p := Proposal{}
 
 			// no proposal yet, use v
 			if p.PNum == 0 {
-				np.Value = v
+				new_p.Value = v
 			} else {
-				np.Value = p.Value
+				new_p.Value = p.Value
 			}
 
-			np.PNum = n
+			new_p.PNum = n
 
-			accept_ok := px.send_accept(seq, np)
+			if DBG_PROPOSER {
+				fmt.Printf("[Start] me:%d\n....prepare OK, proposal=%v\n",
+					px.me, new_p)
+			}
+
+			accept_ok := px.send_accept(seq, new_p)
 			if !accept_ok {
 				continue
 			}
 
-			px.send_decided(seq, np.Value)
+			if DBG_PROPOSER {
+				fmt.Printf("[Start] me:%d\n....accept OK\n", px.me)
+			}
+
+			px.send_decided(seq, new_p.Value)
+
+			if DBG_PROPOSER {
+				fmt.Printf("[Start] me:%d\n....decided\n", px.me)
+			}
 			break
 		}
 	}()
@@ -189,6 +302,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 //
 func (px *Paxos) Done(seq int) {
 	// Your code here.
+	px.z = seq
 }
 
 //
@@ -198,7 +312,7 @@ func (px *Paxos) Done(seq int) {
 //
 func (px *Paxos) Max() int {
 	// Your code here.
-	return 0
+	return px.max_seq
 }
 
 //
@@ -246,7 +360,7 @@ func (px *Paxos) Min() int {
 //
 func (px *Paxos) Status(seq int) (bool, interface{}) {
 	// Your code here.
-	return false, nil
+	return px.Lslots[seq].Decided, px.Lslots[seq].V
 }
 
 //
@@ -270,8 +384,17 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
 	px := &Paxos{}
 	px.peers = peers
 	px.me = me
+	fmt.Printf("#### Make %d/%d ####\n", me, len(peers))
 
 	// Your initialization code here.
+	px.peers_count = len(peers)
+	px.majority = (px.peers_count + 1) / 2
+	px.max_seq = -1
+	px.z = -1
+
+	px.APp = map[int]int{}
+	px.APa = map[int]Proposal{}
+	px.Lslots = map[int]Slot_t{}
 
 	if rpcs != nil {
 		// caller will create socket &c
