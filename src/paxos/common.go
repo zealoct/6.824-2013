@@ -35,3 +35,19 @@ type DecdidedArgs struct {
 type DecidedReply struct {
 	Err Err
 }
+
+type IfDoneArgs struct {
+	Seq int
+}
+
+type IfDoneReply struct {
+	Err Err
+}
+
+type IsDoneArgs struct {
+	Seq int
+}
+
+type IsDoneReply struct {
+	Err Err
+}

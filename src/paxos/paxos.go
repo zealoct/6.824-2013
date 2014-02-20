@@ -32,8 +32,9 @@ import "math/rand"
 const (
 	DBG_PREPARE  = false
 	DBG_ACCEPT   = false
-	DBG_PROPOSER = true
-	DBG_DECIDED  = true
+	DBG_PROPOSER = false
+	DBG_DECIDED  = false
+	DBG_DONE     = false
 )
 
 type Slot_t struct {
@@ -60,8 +61,10 @@ type Paxos struct {
 	peers_count int
 	majority    int
 	max_seq     int
-	// highest number ever passed to Done
-	z int
+
+	// highest number ever passed to (all) Done
+	global_done int
+	local_done  int
 
 	// [A] highest accept seen
 	APa map[int]Proposal
@@ -98,9 +101,9 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	}
 	defer c.Close()
 
-	fmt.Printf("Call srv:%s name:%s\n", srv, name)
+	// fmt.Printf("Call srv:%s name:%s\n", srv, name)
 	err = c.Call(name, args, reply)
-	fmt.Printf("After Call %s, err:%v, rpl:%v\n", srv, err, reply)
+	// fmt.Printf("After Call %s, err:%v, rpl:%v\n", srv, err, reply)
 
 	if err == nil {
 		return true
@@ -108,10 +111,12 @@ func call(srv string, name string, args interface{}, reply interface{}) bool {
 	return false
 }
 
-func (px *Paxos) mylog(dbg bool, funcname, msg string) {
+/* clog(bool, func_name, format) */
+func (px *Paxos) clog(dbg bool, funcname, format string, args ...interface{}) {
 	if dbg {
-		fmt.Printf("[%s] me:%s\n", funcname, px.me)
-		fmt.Printf("...%s\n", msg)
+		l1 := fmt.Sprintf("[%s] me:%d\n", funcname, px.me)
+		l2 := fmt.Sprintf("...."+format, args...)
+		fmt.Println(l1 + l2)
 	}
 }
 
@@ -125,14 +130,36 @@ func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
 	ok_count := 0
 	p := Proposal{}
 
-	for _, peer := range px.peers {
+	if DBG_PREPARE {
+		fmt.Printf("[send_prepare] me:%d\n....send prepare seq=%d n=%d\n",
+			px.me, seq, pNum)
+	}
+
+	for idx, peer := range px.peers {
 		args := &PrepareArgs{}
 		reply := &PrepareReply{}
 
 		args.Seq = seq
 		args.PNum = pNum
 
-		ok := call(peer, "Paxos.Prepare", args, reply)
+		if DBG_PREPARE {
+			fmt.Printf("[send_prepare] me:%d\n....to %s\n",
+				px.me, peer)
+		}
+
+		ok := false
+
+		if idx == px.me {
+			px.Prepare(args, reply)
+			ok = true
+		} else {
+			ok = call(peer, "Paxos.Prepare", args, reply)
+		}
+
+		if DBG_PREPARE {
+			fmt.Printf("[send_prepare] me:%d\n....reply Err:%v P:%v\n",
+				px.me, reply.Err, reply.Proposal)
+		}
 
 		// TODO: what if I got only one Reject?
 
@@ -144,7 +171,12 @@ func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
 		}
 	}
 
-	return (ok_count > px.majority), p
+	if DBG_PREPARE {
+		fmt.Printf("[send_prepare] me:%d\n....ok_count=%d/%d\n",
+			px.me, ok_count, px.majority)
+	}
+
+	return (ok_count >= px.majority), p
 }
 
 /* Acceptor
@@ -171,21 +203,28 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 func (px *Paxos) send_accept(seq int, p Proposal) bool {
 	ok_count := 0
 
-	for _, peer := range px.peers {
+	for idx, peer := range px.peers {
 		args := &AcceptArgs{}
 		reply := &AcceptReply{}
 
 		args.Seq = seq
 		args.Proposal = p
 
-		ok := call(peer, "Paxos.Accept", args, reply)
+		ok := false
+
+		if idx == px.me {
+			px.Accept(args, reply)
+			ok = true
+		} else {
+			ok = call(peer, "Paxos.Accept", args, reply)
+		}
 
 		if ok && reply.Err == OK {
 			ok_count++
 		}
 	}
 
-	return (ok_count > px.majority)
+	return (ok_count >= px.majority)
 }
 
 /* Acceptor
@@ -206,14 +245,18 @@ func (px *Paxos) Accept(args *AcceptArgs, reply *AcceptReply) error {
  * send decided value to all
  */
 func (px *Paxos) send_decided(seq int, v interface{}) {
-	for _, peer := range px.peers {
+	for idx, peer := range px.peers {
 		args := &DecdidedArgs{}
 		reply := &DecidedReply{}
 
 		args.Seq = seq
 		args.V = v
 
-		call(peer, "Paxos.Decided", args, reply)
+		if idx == px.me {
+			px.Decided(args, reply)
+		} else {
+			call(peer, "Paxos.Decided", args, reply)
+		}
 	}
 }
 
@@ -252,8 +295,19 @@ func (px *Paxos) Start(seq int, v interface{}) {
 
 	// I'm Proposer
 	go func() {
+		n := 0
 		for {
-			n := px.APp[seq] + 1
+			if px.APp[seq]+1 > n {
+				n = px.APp[seq] + 1
+			} else {
+				n++
+			}
+
+			if DBG_PROPOSER {
+				fmt.Printf("[Start] me:%d\n....send prepare, seq=%d n=%d\n",
+					px.me, seq, n)
+			}
+
 			prepare_ok, p := px.send_prepare(seq, n)
 			if !prepare_ok {
 				continue
@@ -302,7 +356,87 @@ func (px *Paxos) Start(seq int, v interface{}) {
 //
 func (px *Paxos) Done(seq int) {
 	// Your code here.
-	px.z = seq
+
+	px.clog(DBG_DONE, "Done", "Done: %d", seq)
+
+	if seq <= px.local_done {
+		return
+	}
+
+	// update local_done if need
+
+	px.local_done = seq
+	for k, _ := range px.Lslots {
+		if k <= seq {
+			delete(px.Lslots, k)
+			delete(px.APa, k)
+			delete(px.APp, k)
+			px.clog(DBG_DONE, "Done", "delete %d", k)
+		}
+	}
+
+	px.clog(DBG_DONE, "Done", "local_done=%d", px.local_done)
+
+	// check to see if it is OK to update global_done
+	if px.send_IfDone(seq) {
+		px.global_done = seq
+		px.send_IsDone(seq)
+	}
+}
+
+func (px *Paxos) send_IfDone(seq int) bool {
+	ok_count := 0
+
+	px.clog(DBG_DONE, "send_IfDone", "check seq=%d ", seq)
+	for idx, peer := range px.peers {
+		args := &IfDoneArgs{}
+		reply := &IfDoneReply{}
+
+		args.Seq = seq
+
+		ok := call(peer, "Paxos.IfDone", args, reply)
+
+		px.clog(DBG_DONE, "send_IfDone", "peer %d retuen %t, %v", idx, ok, reply.Err)
+
+		if ok && reply.Err == OK {
+			ok_count++
+		}
+	}
+	px.clog(DBG_DONE, "send_IfDone", "ok_count:%d", ok_count)
+	return (ok_count == px.peers_count)
+}
+
+//
+// other peer ask that if args.Seq is done at this peer
+//
+func (px *Paxos) IfDone(args *IfDoneArgs, reply *IfDoneReply) error {
+	px.clog(DBG_DONE, "IfDone", "check %d, local_done=%d", args.Seq, px.local_done)
+	if args.Seq <= px.local_done {
+		reply.Err = OK
+	} else {
+		// make other peers wait for me
+		reply.Err = Reject
+	}
+
+	return nil
+}
+
+func (px *Paxos) send_IsDone(seq int) {
+	for _, peer := range px.peers {
+		args := &IsDoneArgs{}
+		reply := &IsDoneReply{}
+
+		args.Seq = seq
+
+		call(peer, "Paxos.IsDone", args, reply)
+	}
+}
+
+func (px *Paxos) IsDone(args *IsDoneArgs, reply *IsDoneReply) error {
+	px.global_done = args.Seq
+	px.Done(px.local_done)
+
+	return nil
 }
 
 //
@@ -348,7 +482,7 @@ func (px *Paxos) Max() int {
 //
 func (px *Paxos) Min() int {
 	// You code here.
-	return 0
+	return px.global_done + 1
 }
 
 //
@@ -384,13 +518,14 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
 	px := &Paxos{}
 	px.peers = peers
 	px.me = me
-	fmt.Printf("#### Make %d/%d ####\n", me, len(peers))
+	//fmt.Printf("#### Make %d/%d ####\n", me, len(peers))
 
 	// Your initialization code here.
 	px.peers_count = len(peers)
 	px.majority = (px.peers_count + 1) / 2
 	px.max_seq = -1
-	px.z = -1
+	px.global_done = -1
+	px.local_done = -1
 
 	px.APp = map[int]int{}
 	px.APa = map[int]Proposal{}
