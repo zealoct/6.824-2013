@@ -35,6 +35,7 @@ const (
 	DBG_PROPOSER = false
 	DBG_DECIDED  = false
 	DBG_DONE     = false
+	DBG_RPCCOUNT = false
 )
 
 type Slot_t struct {
@@ -128,12 +129,8 @@ func (px *Paxos) clog(dbg bool, funcname, format string, args ...interface{}) {
  */
 func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
 	ok_count := 0
+	max_reject_pnum := 0
 	p := Proposal{}
-
-	if DBG_PREPARE {
-		fmt.Printf("[send_prepare] me:%d\n....send prepare seq=%d n=%d\n",
-			px.me, seq, pNum)
-	}
 
 	for idx, peer := range px.peers {
 		args := &PrepareArgs{}
@@ -142,10 +139,10 @@ func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
 		args.Seq = seq
 		args.PNum = pNum
 
-		if DBG_PREPARE {
-			fmt.Printf("[send_prepare] me:%d\n....to %s\n",
-				px.me, peer)
-		}
+		// if DBG_PREPARE {
+		// 	fmt.Printf("[send_prepare] me:%d\n....to %s\n",
+		// 		px.me, peer)
+		// }
 
 		ok := false
 
@@ -156,11 +153,6 @@ func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
 			ok = call(peer, "Paxos.Prepare", args, reply)
 		}
 
-		if DBG_PREPARE {
-			fmt.Printf("[send_prepare] me:%d\n....reply Err:%v P:%v\n",
-				px.me, reply.Err, reply.Proposal)
-		}
-
 		// TODO: what if I got only one Reject?
 
 		if ok && reply.Err == OK {
@@ -169,14 +161,20 @@ func (px *Paxos) send_prepare(seq int, pNum int) (bool, Proposal) {
 				p = reply.Proposal
 			}
 		}
+
+		if ok && reply.Err == Reject && reply.Proposal.PNum > max_reject_pnum {
+			// if rejected, record the highest PNum seen
+			max_reject_pnum = reply.Proposal.PNum
+		}
 	}
 
-	if DBG_PREPARE {
-		fmt.Printf("[send_prepare] me:%d\n....ok_count=%d/%d\n",
-			px.me, ok_count, px.majority)
-	}
+	px.clog(DBG_PREPARE, "send_prepare", "seq=%d n=%d ok_count=%d/%d max_rej:%d", seq, pNum, ok_count, px.majority, max_reject_pnum)
 
-	return (ok_count >= px.majority), p
+	if ok_count >= px.majority {
+		return true, p
+	} else {
+		return false, Proposal{max_reject_pnum, nil}
+	}
 }
 
 /* Acceptor
@@ -191,7 +189,7 @@ func (px *Paxos) Prepare(args *PrepareArgs, reply *PrepareReply) error {
 	} else {
 		// Already promised to Proposal with a higher Proposal Number
 		reply.Err = Reject
-		reply.Proposal = Proposal{}
+		reply.Proposal = Proposal{px.APp[args.Seq], nil}
 	}
 	return nil
 }
@@ -223,6 +221,8 @@ func (px *Paxos) send_accept(seq int, p Proposal) bool {
 			ok_count++
 		}
 	}
+
+	px.clog(DBG_PREPARE, "send_accept", "seq=%d p=%v ok_count=%d/%d", seq, p, ok_count, px.majority)
 
 	return (ok_count >= px.majority)
 }
@@ -296,11 +296,28 @@ func (px *Paxos) Start(seq int, v interface{}) {
 	// I'm Proposer
 	go func() {
 		n := 0
+		max_reject_pnum := -1
 		for {
+			if px.dead {
+				// I'm dead
+				break
+			}
+
+			if px.Lslots[seq].Decided {
+				// locally decided, wouldn't send prepare and accept anymore
+				// just propagate the decision
+				px.send_decided(seq, px.Lslots[seq].V)
+				break
+			}
+
 			if px.APp[seq]+1 > n {
 				n = px.APp[seq] + 1
 			} else {
 				n++
+			}
+
+			if n < max_reject_pnum {
+				n = max_reject_pnum + 1
 			}
 
 			if DBG_PROPOSER {
@@ -310,6 +327,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 
 			prepare_ok, p := px.send_prepare(seq, n)
 			if !prepare_ok {
+				max_reject_pnum = p.PNum
 				continue
 			}
 
@@ -567,9 +585,15 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
 							fmt.Printf("shutdown: %v\n", err)
 						}
 						px.rpcCount++
+						if DBG_RPCCOUNT {
+							fmt.Println("*** RPC++ ***")
+						}
 						go rpcs.ServeConn(conn)
 					} else {
 						px.rpcCount++
+						if DBG_RPCCOUNT {
+							fmt.Println("*** RPC++ ***")
+						}
 						go rpcs.ServeConn(conn)
 					}
 				} else if err == nil {
