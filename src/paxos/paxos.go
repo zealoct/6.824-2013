@@ -264,9 +264,8 @@ func (px *Paxos) send_decided(seq int, v interface{}) {
  * handler for decide notification
  */
 func (px *Paxos) Decided(args *DecdidedArgs, reply *DecidedReply) error {
-	if DBG_DECIDED {
-		fmt.Printf("[Decided] me:%d\n....Seq=%d V=%v\n", px.me, args.Seq, args.V)
-	}
+	px.clog(DBG_DECIDED, "Decided", "Seq=%d V=%v", args.Seq, args.V)
+
 	px.Lslots[args.Seq] = Slot_t{true, args.V}
 	if args.Seq > px.max_seq {
 		px.max_seq = args.Seq
@@ -288,10 +287,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 
 	// Your code here.
 
-	if DBG_PROPOSER {
-		fmt.Printf("[Start] me:%d\n....Start seq=%d v=%v\n",
-			px.me, seq, v)
-	}
+	px.clog(DBG_PROPOSER, "Start", "Start seq=%d v=%v", seq, v)
 
 	// I'm Proposer
 	go func() {
@@ -320,10 +316,7 @@ func (px *Paxos) Start(seq int, v interface{}) {
 				n = max_reject_pnum + 1
 			}
 
-			if DBG_PROPOSER {
-				fmt.Printf("[Start] me:%d\n....send prepare, seq=%d n=%d\n",
-					px.me, seq, n)
-			}
+			px.clog(DBG_PROPOSER, "Start", "send prepare, seq=%d n=%d", seq, n)
 
 			prepare_ok, p := px.send_prepare(seq, n)
 			if !prepare_ok {
@@ -342,25 +335,18 @@ func (px *Paxos) Start(seq int, v interface{}) {
 
 			new_p.PNum = n
 
-			if DBG_PROPOSER {
-				fmt.Printf("[Start] me:%d\n....prepare OK, proposal=%v\n",
-					px.me, new_p)
-			}
+			px.clog(DBG_PROPOSER, "Start", "prepare OK, proposal=%v", new_p)
 
 			accept_ok := px.send_accept(seq, new_p)
 			if !accept_ok {
 				continue
 			}
 
-			if DBG_PROPOSER {
-				fmt.Printf("[Start] me:%d\n....accept OK\n", px.me)
-			}
+			px.clog(DBG_PROPOSER, "Start", "accept OK")
 
 			px.send_decided(seq, new_p.Value)
 
-			if DBG_PROPOSER {
-				fmt.Printf("[Start] me:%d\n....decided\n", px.me)
-			}
+			px.clog(DBG_PROPOSER, "Start", "decided")
 			break
 		}
 	}()
